@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Student documents, photos and admission files are personal data - never commit them
+backend/uploads/
+backend/private_uploads/
+.vscode/

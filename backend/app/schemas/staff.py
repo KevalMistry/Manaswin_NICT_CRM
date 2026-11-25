@@ -6,6 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field
 MANAGED_ROLES = {"Faculty", "Staff", "Counsellor"}
 
 
+class ManagedRoleResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+
+
 class ManagedUserCreate(BaseModel):
     full_name: str = Field(min_length=2, max_length=150)
     email: str

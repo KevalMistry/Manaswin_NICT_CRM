@@ -12,6 +12,7 @@ from app.models.role import Role
 from app.models.user import User
 from app.schemas.staff import (
     MANAGED_ROLES,
+    ManagedRoleResponse,
     ManagedUserCreate,
     ManagedUserResponse,
     ManagedUserUpdate,
@@ -47,14 +48,45 @@ def managed_role(db: DatabaseSession, role_id: int) -> Role:
 
 def manageable_role(db: DatabaseSession, role_id: int, current_user: User) -> Role:
     role = db.get(Role, role_id)
-    allowed_roles = (
+    if role is None or role.name not in allowed_managed_roles(current_user):
+        raise HTTPException(status_code=400, detail="You cannot manage this account role")
+    return role
+
+
+def allowed_managed_roles(current_user: User) -> set[str]:
+    return (
         SUPER_ADMIN_MANAGED_ROLES
         if current_user.role.name == "Super Admin"
         else MANAGED_ROLES
     )
-    if role is None or role.name not in allowed_roles:
-        raise HTTPException(status_code=400, detail="You cannot manage this account role")
-    return role
+
+
+@router.get(
+    "/roles",
+    response_model=list[ManagedRoleResponse],
+    dependencies=[Depends(StaffAccess)],
+)
+def list_managed_roles(
+    db: DatabaseSession,
+    current_user: User = Depends(ManageAssignments),
+) -> list[ManagedRoleResponse]:
+    """Return manageable roles with their database IDs.
+
+    Role IDs are database-generated and can differ between installations, so
+    clients must never hardcode them. Names are the stable contract.
+    """
+    allowed = allowed_managed_roles(current_user)
+    roles = db.scalars(
+        select(Role).where(
+            Role.name.in_(allowed),
+            Role.is_active.is_(True),
+        )
+    ).all()
+    order = {name: index for index, name in enumerate(
+        ("Branch Admin", "Faculty", "Staff", "Counsellor")
+    )}
+    ordered = sorted(roles, key=lambda role: order.get(role.name, len(order)))
+    return [ManagedRoleResponse(id=role.id, name=role.name) for role in ordered]
 
 
 def validate_managed_user(db: DatabaseSession, user_id: int, branch_id: int, current_user: User) -> User:

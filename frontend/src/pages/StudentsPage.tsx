@@ -11,6 +11,11 @@ type Student = {
   id: number
   student_code: string
   roll_number: string | null
+  batch_time: string | null
+  course_name: string | null
+  registration_number: string | null
+  form_number: string | null
+  date_of_joining: string | null
   full_name: string
   branch_id: number
   email: string | null
@@ -30,9 +35,15 @@ type Student = {
 }
 
 type Branch = { id: number; name: string; code: string }
+type Course = { id: number; name: string }
 type StudentForm = {
   full_name: string
   branch_id: string
+  batch_time: string
+  course_name: string
+  registration_number: string
+  form_number: string
+  date_of_joining: string
   email: string
   phone: string
   date_of_birth: string
@@ -47,7 +58,8 @@ type StudentForm = {
 }
 
 const emptyForm: StudentForm = {
-  full_name: '', branch_id: '', email: '', phone: '', date_of_birth: '', gender: '',
+  full_name: '', branch_id: '', batch_time: '', course_name: '', registration_number: '',
+  form_number: '', date_of_joining: '', email: '', phone: '', date_of_birth: '', gender: '',
   aadhaar_number: '', pan_number: '', parent_name: '', parent_phone: '', address: '',
   qualification: '', skill_level: '',
 }
@@ -55,6 +67,7 @@ const emptyForm: StudentForm = {
 function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([])
   const [branches, setBranches] = useState<Branch[]>([])
+  const [courses, setCourses] = useState<Course[]>([])
   const [form, setForm] = useState<StudentForm>(emptyForm)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
@@ -93,6 +106,7 @@ function StudentsPage() {
 
   useEffect(() => {
     void api.get<Branch[]>('/api/branches').then(({ data }) => setBranches(data)).catch(() => setError('Could not load branches.'))
+    void api.get<Course[]>('/api/courses', { params: { limit: 100 } }).then(({ data }) => setCourses(data)).catch(() => setError('Could not load courses.'))
   }, [])
 
   useEffect(() => {
@@ -113,6 +127,11 @@ function StudentsPage() {
     setForm({
       full_name: student.full_name,
       branch_id: String(student.branch_id),
+      batch_time: student.batch_time ?? '',
+      course_name: student.course_name ?? '',
+      registration_number: student.registration_number ?? '',
+      form_number: student.form_number ?? '',
+      date_of_joining: student.date_of_joining ?? '',
       email: student.email ?? '',
       phone: student.phone ?? '',
       date_of_birth: student.date_of_birth ?? '',
@@ -141,6 +160,11 @@ function StudentsPage() {
     const payload = {
       full_name: form.full_name,
       branch_id: Number(form.branch_id),
+      batch_time: form.batch_time || null,
+      course_name: form.course_name || null,
+      registration_number: form.registration_number || null,
+      form_number: form.form_number || null,
+      date_of_joining: form.date_of_joining || null,
       email: form.email || null,
       phone: form.phone || null,
       date_of_birth: form.date_of_birth || null,
@@ -242,6 +266,11 @@ function StudentsPage() {
 <div className="field full-field"><label htmlFor="student-name">Full name</label><input id="student-name" value={form.full_name} onChange={(event) => updateField('full_name', event.target.value)} placeholder="Student full name" required /></div>
 <div className="field full-field"><label htmlFor="student-photo">Student photo</label><input id="student-photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)} /><small className="field-hint">JPG, PNG or WebP, up to 3 MB.</small></div>
 <div className="field"><label htmlFor="student-branch">Branch</label><select id="student-branch" value={form.branch_id} onChange={(event) => updateField('branch_id', event.target.value)} required><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code})</option>)}</select></div>
+<div className="field"><label htmlFor="student-course-name">Course name</label><input id="student-course-name" list="student-course-options" value={form.course_name} onChange={(event) => updateField('course_name', event.target.value)} placeholder="e.g. Diploma in Computer Applications" /><datalist id="student-course-options">{courses.map((course) => <option key={course.id} value={course.name} />)}</datalist></div>
+<div className="field"><label htmlFor="student-batch-time">Batch time</label><input id="student-batch-time" value={form.batch_time} onChange={(event) => updateField('batch_time', event.target.value)} placeholder="e.g. Morning, 9:00–11:00" /></div>
+<div className="field"><label htmlFor="student-registration-number">Registration no.</label><input id="student-registration-number" value={form.registration_number} onChange={(event) => updateField('registration_number', event.target.value)} placeholder="e.g. REG-2026-001" /></div>
+<div className="field"><label htmlFor="student-form-number">Form no.</label><input id="student-form-number" value={form.form_number} onChange={(event) => updateField('form_number', event.target.value)} placeholder="e.g. F-001" /></div>
+<div className="field"><label htmlFor="student-date-of-joining">Date of joining</label><input id="student-date-of-joining" type="date" value={form.date_of_joining} onChange={(event) => updateField('date_of_joining', event.target.value)} /></div>
 <div className="field"><label htmlFor="student-phone">Phone</label><input id="student-phone" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} placeholder="+91…" /></div>
 <div className="field"><label htmlFor="student-email">Email</label><input id="student-email" type="email" value={form.email} onChange={(event) => updateField('email', event.target.value)} placeholder="student@example.com" /></div>
 <div className="field"><label htmlFor="student-dob">Date of birth</label><input id="student-dob" type="date" value={form.date_of_birth} onChange={(event) => updateField('date_of_birth', event.target.value)} /></div>

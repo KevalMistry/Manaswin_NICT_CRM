@@ -60,7 +60,7 @@ def _filter_rows_by_date(
     if date_from is None and date_to is None:
         return rows
     date_keys = (
-        "admission_date", "payment_date", "attendance_date", "exam_date",
+        "admission_date", "date_of_joining", "payment_date", "attendance_date", "exam_date",
         "expense_date", "due_date", "follow_up_date", "converted_at",
         "start_date", "end_date", "issue_date", "review_month",
         "created_at", "date", "month",
@@ -145,8 +145,16 @@ def build_admissions(db: Session, branch_id: int | None, faculty_id: int | None)
             "enrollment_code": enrollment.enrollment_code,
             "student_name": student.full_name,
             "student_code": student.student_code,
-            "course": course.name,
+            "registration_number": student.registration_number or "—",
+            "form_number": student.form_number or "—",
+            "course": student.course_name or course.name,
             "batch": batch.name,
+            "batch_time": student.batch_time or "—",
+            "date_of_joining": (
+                student.date_of_joining.isoformat()
+                if student.date_of_joining
+                else "—"
+            ),
             "branch": branch.name,
             "status": enrollment.status.title(),
         }
@@ -159,8 +167,12 @@ def build_admissions(db: Session, branch_id: int | None, faculty_id: int | None)
             {"key": "enrollment_code", "label": "Enrollment"},
             {"key": "student_name", "label": "Student"},
             {"key": "student_code", "label": "Student Code"},
+            {"key": "registration_number", "label": "Registration No."},
+            {"key": "form_number", "label": "Form No."},
             {"key": "course", "label": "Course"},
             {"key": "batch", "label": "Batch"},
+            {"key": "batch_time", "label": "Batch Time"},
+            {"key": "date_of_joining", "label": "Date of Joining"},
             {"key": "branch", "label": "Branch"},
             {"key": "status", "label": "Status"},
         ],
@@ -169,6 +181,68 @@ def build_admissions(db: Session, branch_id: int | None, faculty_id: int | None)
             {"label": "Admissions", "value": len(rows)},
             {"label": "Active", "value": active},
             {"label": "Completed / Other", "value": len(rows) - active},
+        ],
+    }
+
+
+def build_student_details(db: Session, branch_id: int | None, faculty_id: int | None) -> dict:
+    """One row per student, including profiles not yet enrolled in a batch."""
+    enrolled_batch = (
+        select(func.coalesce(func.max(Batch.name), "—"))
+        .select_from(Enrollment)
+        .join(Batch, Enrollment.batch_id == Batch.id)
+        .where(Enrollment.student_id == Student.id)
+        .correlate(Student)
+        .scalar_subquery()
+    )
+    query = (
+        select(Student, Branch, enrolled_batch)
+        .join(Branch, Student.branch_id == Branch.id)
+        .order_by(Student.full_name)
+    )
+    if branch_id is not None:
+        query = query.where(Student.branch_id == branch_id)
+    records = db.execute(query.limit(ROW_LIMIT)).all()
+
+    rows = [
+        {
+            "student_name": student.full_name,
+            "student_code": student.student_code,
+            "registration_number": student.registration_number or "—",
+            "form_number": student.form_number or "—",
+            # "course" and "batch" are the keys used by the report filters.
+            "course": student.course_name or "—",
+            "batch": enrolled_batch_name,
+            "batch_time": student.batch_time or "—",
+            "date_of_joining": (
+                student.date_of_joining.isoformat()
+                if student.date_of_joining
+                else "—"
+            ),
+            "branch": branch.name,
+            "status": "Active" if student.is_active else "Inactive",
+        }
+        for student, branch, enrolled_batch_name in records
+    ]
+    active = sum(1 for row in rows if row["status"] == "Active")
+    return {
+        "columns": [
+            {"key": "student_name", "label": "Student"},
+            {"key": "student_code", "label": "Student Code"},
+            {"key": "registration_number", "label": "Registration No."},
+            {"key": "form_number", "label": "Form No."},
+            {"key": "course", "label": "Course Name"},
+            {"key": "batch", "label": "Batch"},
+            {"key": "batch_time", "label": "Batch Time"},
+            {"key": "date_of_joining", "label": "Date of Joining"},
+            {"key": "branch", "label": "Branch"},
+            {"key": "status", "label": "Status"},
+        ],
+        "rows": rows,
+        "summary": [
+            {"label": "Students", "value": len(rows)},
+            {"label": "Active", "value": active},
+            {"label": "Inactive", "value": len(rows) - active},
         ],
     }
 
@@ -346,6 +420,11 @@ def build_student_attendance(db: Session, branch_id: int | None, faculty_id: int
             Enrollment.enrollment_code,
             Student.full_name,
             Student.student_code,
+            Student.course_name,
+            Student.batch_time,
+            Student.registration_number,
+            Student.form_number,
+            Student.date_of_joining,
             Batch.name,
             func.count(Attendance.id),
             func.coalesce(
@@ -362,6 +441,11 @@ def build_student_attendance(db: Session, branch_id: int | None, faculty_id: int
             Enrollment.enrollment_code,
             Student.full_name,
             Student.student_code,
+            Student.course_name,
+            Student.batch_time,
+            Student.registration_number,
+            Student.form_number,
+            Student.date_of_joining,
             Batch.name,
         )
         .order_by(Student.full_name)
@@ -375,7 +459,19 @@ def build_student_attendance(db: Session, branch_id: int | None, faculty_id: int
     rows = []
     rate_total = 0.0
     low_attendance = 0
-    for enrollment_code, student_name, student_code, batch_name, total, attended in records:
+    for (
+        enrollment_code,
+        student_name,
+        student_code,
+        course_name,
+        batch_time,
+        registration_number,
+        form_number,
+        date_of_joining,
+        batch_name,
+        total,
+        attended,
+    ) in records:
         total = int(total or 0)
         attended = int(attended or 0)
         rate = _rate(attended, total)
@@ -386,8 +482,13 @@ def build_student_attendance(db: Session, branch_id: int | None, faculty_id: int
             {
                 "student_name": student_name,
                 "student_code": student_code,
-                "enrollment_code": enrollment_code,
+                "registration_number": registration_number or "—",
+                "form_number": form_number or "—",
+                "course": course_name or "—",
                 "batch": batch_name,
+                "batch_time": batch_time or "—",
+                "date_of_joining": date_of_joining.isoformat() if date_of_joining else "—",
+                "enrollment_code": enrollment_code,
                 "total_classes": total,
                 "attended": attended,
                 "attendance_rate": rate,
@@ -399,8 +500,13 @@ def build_student_attendance(db: Session, branch_id: int | None, faculty_id: int
         "columns": [
             {"key": "student_name", "label": "Student"},
             {"key": "student_code", "label": "Student Code"},
-            {"key": "enrollment_code", "label": "Enrollment"},
+            {"key": "registration_number", "label": "Registration No."},
+            {"key": "form_number", "label": "Form No."},
+            {"key": "course", "label": "Course Name"},
             {"key": "batch", "label": "Batch"},
+            {"key": "batch_time", "label": "Batch Time"},
+            {"key": "date_of_joining", "label": "Date of Joining"},
+            {"key": "enrollment_code", "label": "Enrollment"},
             {"key": "total_classes", "label": "Classes"},
             {"key": "attended", "label": "Attended"},
             {"key": "attendance_rate", "label": "Attendance %"},
@@ -1281,6 +1387,13 @@ REPORT_DEFINITIONS: dict[str, dict] = {
         "module": "enrollments",
         "roles": ("Super Admin", "Branch Admin", "Staff", "Counsellor"),
         "builder": build_admissions,
+    },
+    "student-details": {
+        "title": "Student Details Report",
+        "description": "Student profiles with course, batch time, registration/form numbers and joining date.",
+        "module": "students",
+        "roles": ("Super Admin", "Branch Admin", "Staff", "Counsellor"),
+        "builder": build_student_details,
     },
     "enquiry-conversion": {
         "title": "Inquiry Conversion Report",

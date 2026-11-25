@@ -18,6 +18,14 @@ class Student(Base):
     roll_number: Mapped[str | None] = mapped_column(
         String(40), unique=True, nullable=True
     )
+    # Intake details captured when a student profile is created. These are
+    # intentionally free-text (except the joining date) because older records
+    # and admission sources may not map to an existing course/batch row.
+    batch_time: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    course_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    registration_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    form_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    date_of_joining: Mapped[date | None] = mapped_column(Date, nullable=True)
     full_name: Mapped[str] = mapped_column(String(150), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True)

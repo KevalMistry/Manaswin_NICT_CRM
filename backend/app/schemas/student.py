@@ -6,6 +6,11 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 class StudentCreate(BaseModel):
     full_name: str = Field(min_length=2, max_length=150)
     branch_id: int
+    batch_time: str | None = Field(default=None, max_length=50)
+    course_name: str | None = Field(default=None, max_length=150)
+    registration_number: str | None = Field(default=None, max_length=50)
+    form_number: str | None = Field(default=None, max_length=50)
+    date_of_joining: date | None = None
     email: EmailStr | None = None
     phone: str | None = Field(default=None, max_length=30)
     date_of_birth: date | None = None
@@ -23,6 +28,11 @@ class StudentCreate(BaseModel):
 class StudentUpdate(BaseModel):
     full_name: str | None = Field(default=None, min_length=2, max_length=150)
     branch_id: int | None = None
+    batch_time: str | None = Field(default=None, max_length=50)
+    course_name: str | None = Field(default=None, max_length=150)
+    registration_number: str | None = Field(default=None, max_length=50)
+    form_number: str | None = Field(default=None, max_length=50)
+    date_of_joining: date | None = None
     email: EmailStr | None = None
     phone: str | None = Field(default=None, max_length=30)
     date_of_birth: date | None = None
@@ -70,6 +80,11 @@ class StudentResponse(BaseModel):
     id: int
     student_code: str
     roll_number: str | None
+    batch_time: str | None
+    course_name: str | None
+    registration_number: str | None
+    form_number: str | None
+    date_of_joining: date | None
     full_name: str
     branch_id: int
     email: EmailStr | None

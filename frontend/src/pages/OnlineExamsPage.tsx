@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import api from '../services/api'
 import { apiErrorMessage } from '../utils/apiErrors'
 import { getStoredUser } from '../utils/auth'
+import {
+  externalFormLabel,
+  validateExternalFormUrl,
+  type ExternalFormProvider,
+} from '../utils/externalForms'
 
 type ExamCourse = {
   id: number
@@ -41,6 +46,8 @@ type Bank = {
   course_id: number
   title: string
   description: string | null
+  external_form_url: string | null
+  external_form_provider: ExternalFormProvider
   created_at: string
   questions: BankQuestion[]
 }
@@ -81,6 +88,8 @@ type ExamSummary = {
   batch_id: number | null
   title: string
   description: string | null
+  external_form_url: string | null
+  external_form_provider: ExternalFormProvider
   start_at: string | null
   end_at: string | null
   duration_minutes: number
@@ -107,6 +116,10 @@ type ExamForm = {
   batch_id: string
   description: string
   instructions: string
+  delivery_mode: 'crm' | 'external'
+  source_bank_id: string
+  external_form_provider: ExternalFormProvider
+  external_form_url: string
   start_at: string
   end_at: string
   duration_minutes: string
@@ -159,6 +172,10 @@ function emptyExamForm(): ExamForm {
     batch_id: '',
     description: '',
     instructions: 'Answer every question. The exam submits automatically when the timer ends.',
+    delivery_mode: 'crm',
+    source_bank_id: '',
+    external_form_provider: null,
+    external_form_url: '',
     start_at: toLocalInput(start.toISOString()),
     end_at: toLocalInput(end.toISOString()),
     duration_minutes: '60',
@@ -189,13 +206,23 @@ function OnlineExamsPage() {
   const [banks, setBanks] = useState<Bank[]>([])
   const [selectedExam, setSelectedExam] = useState<ExamDetail | null>(null)
   const [selectedBankId, setSelectedBankId] = useState<number | null>(null)
+  const selectedBankIdRef = useRef<number | null>(null)
   const [tab, setTab] = useState<'exams' | 'banks'>('exams')
   const [showExamForm, setShowExamForm] = useState(false)
   const [showBankForm, setShowBankForm] = useState(false)
   const [showExamQuestionForm, setShowExamQuestionForm] = useState(false)
   const [showBankQuestionForm, setShowBankQuestionForm] = useState(false)
   const [examForm, setExamForm] = useState<ExamForm>(emptyExamForm)
-  const [bankForm, setBankForm] = useState({ title: '', description: '' })
+  const [bankForm, setBankForm] = useState({
+    title: '',
+    description: '',
+    external_form_provider: null as ExternalFormProvider,
+    external_form_url: '',
+  })
+  const [detailLinkForm, setDetailLinkForm] = useState({
+    external_form_provider: null as ExternalFormProvider,
+    external_form_url: '',
+  })
   const [questionForm, setQuestionForm] = useState<QuestionForm>(emptyQuestion)
   const [bankQuestionForm, setBankQuestionForm] = useState<QuestionForm>(emptyQuestion)
   const [selectedBankQuestionIds, setSelectedBankQuestionIds] = useState<number[]>([])
@@ -219,6 +246,16 @@ function OnlineExamsPage() {
     () => courses.find((course) => String(course.id) === courseId) ?? null,
     [courses, courseId],
   )
+
+  function selectBank(bank: Bank | null) {
+    selectedBankIdRef.current = bank?.id ?? null
+    setSelectedBankId(bank?.id ?? null)
+    setBankForm((current) => ({
+      ...current,
+      external_form_provider: bank?.external_form_provider ?? null,
+      external_form_url: bank?.external_form_url ?? '',
+    }))
+  }
 
   const loadCourses = useCallback(async () => {
     try {
@@ -255,9 +292,21 @@ function OnlineExamsPage() {
         params: { course_id: Number(courseId) },
       })
       setBanks(data)
-      setSelectedBankId((current) =>
-        current && data.some((bank) => bank.id === current) ? current : (data[0]?.id ?? null),
-      )
+      const nextId =
+        selectedBankIdRef.current &&
+        data.some((bank) => bank.id === selectedBankIdRef.current)
+          ? selectedBankIdRef.current
+          : (data[0]?.id ?? null)
+      selectedBankIdRef.current = nextId
+      setSelectedBankId(nextId)
+      const nextBank = data.find((bank) => bank.id === nextId)
+      if (nextBank) {
+        setBankForm((current) => ({
+          ...current,
+          external_form_provider: nextBank.external_form_provider ?? null,
+          external_form_url: nextBank.external_form_url ?? '',
+        }))
+      }
     } catch (requestError) {
       setError(apiErrorMessage(requestError, 'Unable to load question banks.'))
     }
@@ -272,6 +321,7 @@ function OnlineExamsPage() {
     const timer = window.setTimeout(() => {
       setLoading(true)
       setSelectedExam(null)
+      selectedBankIdRef.current = null
       setSelectedBankId(null)
       void loadExams()
       void loadBanks()
@@ -283,6 +333,10 @@ function OnlineExamsPage() {
     try {
       const { data } = await api.get<ExamDetail>(`/api/online-exams/${examId}`)
       setSelectedExam(data)
+      setDetailLinkForm({
+        external_form_provider: data.external_form_provider ?? null,
+        external_form_url: data.external_form_url ?? '',
+      })
     } catch (requestError) {
       setError(apiErrorMessage(requestError, 'Unable to load this exam.'))
     }
@@ -312,13 +366,28 @@ function OnlineExamsPage() {
     setBusy(true)
     setError('')
     setMessage('')
+    const isExternal = examForm.delivery_mode === 'external'
+    if (isExternal) {
+      const linkError = validateExternalFormUrl(
+        examForm.external_form_url,
+        examForm.external_form_provider,
+      )
+      if (linkError) {
+        setError(linkError)
+        setBusy(false)
+        return
+      }
+    }
     try {
       const { data } = await api.post<ExamDetail>('/api/online-exams', {
         course_id: Number(courseId),
         batch_id: examForm.batch_id ? Number(examForm.batch_id) : null,
+        source_bank_id: examForm.source_bank_id ? Number(examForm.source_bank_id) : null,
         title: examForm.title,
         description: examForm.description || null,
         instructions: examForm.instructions || null,
+        external_form_url: isExternal ? examForm.external_form_url.trim() : null,
+        external_form_provider: isExternal ? examForm.external_form_provider : null,
         start_at: fromLocalInput(examForm.start_at),
         end_at: fromLocalInput(examForm.end_at),
         duration_minutes: Number(examForm.duration_minutes || 60),
@@ -331,8 +400,16 @@ function OnlineExamsPage() {
       setExamForm(emptyExamForm())
       setSelectedBankQuestionIds([])
       setShowExamForm(false)
-      setMessage('Exam draft created. Add questions, then publish it.')
+      setMessage(
+        isExternal
+          ? 'External form exam created. Publish it to share the form with students.'
+          : 'Exam draft created. Add questions, then publish it.',
+      )
       setSelectedExam(data)
+      setDetailLinkForm({
+        external_form_provider: data.external_form_provider ?? null,
+        external_form_url: data.external_form_url ?? '',
+      })
       await Promise.all([loadExams(), loadBanks()])
     } catch (requestError) {
       setError(apiErrorMessage(requestError, 'Unable to create the exam.'))
@@ -364,15 +441,35 @@ function OnlineExamsPage() {
     setBusy(true)
     setError('')
     setMessage('')
+    const linkError = bankForm.external_form_url
+      ? validateExternalFormUrl(
+          bankForm.external_form_url,
+          bankForm.external_form_provider,
+        )
+      : null
+    if (linkError) {
+      setError(linkError)
+      setBusy(false)
+      return
+    }
     try {
       const { data } = await api.post<Bank>('/api/online-exams/banks', {
         course_id: Number(courseId),
         title: bankForm.title,
         description: bankForm.description || null,
+        external_form_url: bankForm.external_form_url.trim() || null,
+        external_form_provider: bankForm.external_form_url.trim()
+          ? bankForm.external_form_provider
+          : null,
       })
-      setBankForm({ title: '', description: '' })
+      setBankForm({
+        title: '',
+        description: '',
+        external_form_provider: null,
+        external_form_url: '',
+      })
       setShowBankForm(false)
-      setSelectedBankId(data.id)
+      selectBank(data)
       setMessage('Question bank created.')
       await loadBanks()
     } catch (requestError) {
@@ -425,6 +522,59 @@ function OnlineExamsPage() {
     if (ok) await loadExamDetail(exam.id)
   }
 
+  async function saveExamLink(event: FormEvent) {
+    event.preventDefault()
+    if (!selectedExam) return
+    setError('')
+    const linkError = detailLinkForm.external_form_url
+      ? validateExternalFormUrl(
+          detailLinkForm.external_form_url,
+          detailLinkForm.external_form_provider,
+        )
+      : null
+    if (linkError) {
+      setError(linkError)
+      return
+    }
+    const ok = await run(
+      () =>
+        api.patch(`/api/online-exams/${selectedExam.id}`, {
+          external_form_url: detailLinkForm.external_form_url.trim() || null,
+          external_form_provider: detailLinkForm.external_form_url.trim()
+            ? detailLinkForm.external_form_provider
+            : null,
+        }),
+      'External form link updated.',
+    )
+    if (ok) await loadExamDetail(selectedExam.id)
+  }
+
+  async function saveBankLink(event: FormEvent) {
+    event.preventDefault()
+    if (!selectedBank) return
+    const linkError = bankForm.external_form_url
+      ? validateExternalFormUrl(
+          bankForm.external_form_url,
+          bankForm.external_form_provider,
+        )
+      : null
+    if (linkError) {
+      setError(linkError)
+      return
+    }
+    const ok = await run(
+      () =>
+        api.patch(`/api/online-exams/banks/${selectedBank.id}`, {
+          external_form_url: bankForm.external_form_url.trim() || null,
+          external_form_provider: bankForm.external_form_url.trim()
+            ? bankForm.external_form_provider
+            : null,
+        }),
+      'Question bank form link updated.',
+    )
+    if (ok) setSelectedBankId(selectedBank.id)
+  }
+
   async function deleteExamQuestion(questionId: number) {
     if (!selectedExam) return
     if (!window.confirm('Remove this question from the exam?')) return
@@ -449,7 +599,7 @@ function OnlineExamsPage() {
       () => api.delete(`/api/online-exams/banks/${bank.id}`),
       'Question bank deleted.',
     )
-    if (ok) setSelectedBankId(null)
+    if (ok) selectBank(null)
   }
 
   function toggleBankQuestion(questionId: number) {
@@ -598,6 +748,91 @@ function OnlineExamsPage() {
                     ))}
                   </select>
                 </div>
+                <div className="field full-field">
+                  <label htmlFor="exam-delivery">Exam delivery</label>
+                  <select
+                    id="exam-delivery"
+                    value={examForm.delivery_mode}
+                    onChange={(event) =>
+                      setExamForm({
+                        ...examForm,
+                        delivery_mode: event.target.value as 'crm' | 'external',
+                      })
+                    }
+                  >
+                    <option value="crm">Questions in the CRM (timed and auto-graded)</option>
+                    <option value="external">Google/Microsoft Forms published link</option>
+                  </select>
+                  <small className="muted">
+                    External form exams open the form you published. Responses and grades stay
+                    in Google/Microsoft Forms.
+                  </small>
+                </div>
+                {examForm.delivery_mode === 'external' && (
+                  <>
+                    <div className="field">
+                      <label htmlFor="exam-form-provider">Form provider</label>
+                      <select
+                        id="exam-form-provider"
+                        value={examForm.external_form_provider ?? ''}
+                        onChange={(event) =>
+                          setExamForm({
+                            ...examForm,
+                            external_form_provider:
+                              (event.target.value || null) as ExternalFormProvider,
+                          })
+                        }
+                      >
+                        <option value="">Auto-detect from link</option>
+                        <option value="google">Google Forms</option>
+                        <option value="microsoft">Microsoft Forms</option>
+                      </select>
+                    </div>
+                    <div className="field full-field">
+                      <label htmlFor="exam-form-url">Published form link</label>
+                      <input
+                        id="exam-form-url"
+                        type="url"
+                        required
+                        value={examForm.external_form_url}
+                        onChange={(event) =>
+                          setExamForm({ ...examForm, external_form_url: event.target.value })
+                        }
+                        placeholder="https://docs.google.com/forms/d/e/…/viewform"
+                      />
+                    </div>
+                    {banks.some((bank) => bank.external_form_url) && (
+                      <div className="field full-field">
+                        <label htmlFor="exam-source-bank">Or reuse a bank’s form link</label>
+                        <select
+                          id="exam-source-bank"
+                          value={examForm.source_bank_id}
+                          onChange={(event) => {
+                            const bank = banks.find(
+                              (item) => String(item.id) === event.target.value,
+                            )
+                            setExamForm({
+                              ...examForm,
+                              source_bank_id: event.target.value,
+                              external_form_url: bank?.external_form_url ?? '',
+                              external_form_provider:
+                                bank?.external_form_provider ?? null,
+                            })
+                          }}
+                        >
+                          <option value="">Choose a bank</option>
+                          {banks
+                            .filter((bank) => bank.external_form_url)
+                            .map((bank) => (
+                              <option key={bank.id} value={bank.id}>
+                                {bank.title} · {externalFormLabel(bank.external_form_provider)}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    )}
+                  </>
+                )}
                 <div className="field">
                   <label htmlFor="exam-start">Opens at</label>
                   <input
@@ -620,6 +855,8 @@ function OnlineExamsPage() {
                     }
                   />
                 </div>
+                {examForm.delivery_mode === 'crm' && (
+                  <>
                 <div className="field">
                   <label htmlFor="exam-duration">Duration (minutes)</label>
                   <input
@@ -681,6 +918,8 @@ function OnlineExamsPage() {
                     Negative marking (−25% per wrong answer)
                   </label>
                 </div>
+                  </>
+                )}
                 <div className="field full-field">
                   <label htmlFor="exam-description">Description</label>
                   <textarea
@@ -703,7 +942,7 @@ function OnlineExamsPage() {
                     }
                   />
                 </div>
-                {banks.length > 0 && (
+                {examForm.delivery_mode === 'crm' && banks.length > 0 && (
                   <div className="field full-field">
                     <label>Pull questions from question banks</label>
                     <div className="exam-bank-picker">
@@ -761,8 +1000,10 @@ function OnlineExamsPage() {
                       <strong>{exam.title}</strong>
                       <p>
                         {formatDateTime(exam.start_at)} → {formatDateTime(exam.end_at)} ·{' '}
-                        {exam.duration_minutes} min · {exam.question_count} questions ·{' '}
-                        {exam.total_marks} marks · {exam.attempt_count} attempts
+                        {exam.external_form_url
+                          ? `${externalFormLabel(exam.external_form_provider)} exam`
+                          : `${exam.duration_minutes} min · ${exam.question_count} questions · ${exam.total_marks} marks`}{' '}
+                        · {exam.attempt_count} attempts
                       </p>
                     </div>
                     {canManage && (
@@ -810,6 +1051,21 @@ function OnlineExamsPage() {
                     <span className="exam-chip">
                       Pass {exam.pass_percentage}% · {exam.max_attempts} attempt(s)
                     </span>
+                    {exam.external_form_url && (
+                      <>
+                        <span className="exam-chip">
+                          {externalFormLabel(exam.external_form_provider)}
+                        </span>
+                        <a
+                          className="external-form-link"
+                          href={exam.external_form_url}
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          Open form ↗
+                        </a>
+                      </>
+                    )}
                     {exam.shuffle_questions && <span className="exam-chip">Shuffled</span>}
                     {exam.negative_marking && (
                       <span className="exam-chip">Negative marking</span>
@@ -837,13 +1093,80 @@ function OnlineExamsPage() {
                   <h2>{selectedExam.title}</h2>
                 </div>
                 <span className="result-count">
-                  {selectedExam.question_count} questions · {selectedExam.total_marks} marks
+                  {selectedExam.external_form_url
+                    ? externalFormLabel(selectedExam.external_form_provider)
+                    : `${selectedExam.question_count} questions · ${selectedExam.total_marks} marks`}
                 </span>
               </div>
               {selectedExam.instructions && (
                 <p className="lms-instructions">{selectedExam.instructions}</p>
               )}
-              {canManage && !selectedExam.is_published && (
+              {selectedExam.external_form_url && (
+                <div className="external-form-panel">
+                  <div>
+                    <strong>
+                      {externalFormLabel(selectedExam.external_form_provider)} exam form
+                    </strong>
+                    <p>
+                      Students see an “Open exam form” button during the exam window.
+                      Responses and grades stay in the form.
+                    </p>
+                  </div>
+                  <a
+                    className="external-form-link"
+                    href={selectedExam.external_form_url}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    Open form ↗
+                  </a>
+                </div>
+              )}
+              {canManage && selectedExam.external_form_url && (
+                <form
+                  className="form-grid lms-inline-form"
+                  onSubmit={(event) => void saveExamLink(event)}
+                >
+                  <div className="field">
+                    <label htmlFor="detail-form-provider">Form provider</label>
+                    <select
+                      id="detail-form-provider"
+                      value={detailLinkForm.external_form_provider ?? ''}
+                      onChange={(event) =>
+                        setDetailLinkForm({
+                          ...detailLinkForm,
+                          external_form_provider:
+                            (event.target.value || null) as ExternalFormProvider,
+                        })
+                      }
+                    >
+                      <option value="">Auto-detect from link</option>
+                      <option value="google">Google Forms</option>
+                      <option value="microsoft">Microsoft Forms</option>
+                    </select>
+                  </div>
+                  <div className="field full-field">
+                    <label htmlFor="detail-form-url">Published form link</label>
+                    <input
+                      id="detail-form-url"
+                      type="url"
+                      value={detailLinkForm.external_form_url}
+                      onChange={(event) =>
+                        setDetailLinkForm({
+                          ...detailLinkForm,
+                          external_form_url: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="full-field modal-actions">
+                    <button className="primary-button" disabled={busy} type="submit">
+                      {busy ? 'Saving…' : 'Update form link'}
+                    </button>
+                  </div>
+                </form>
+              )}
+              {canManage && !selectedExam.is_published && !selectedExam.external_form_url && (
                 <div className="toolbar-controls">
                   <button
                     className="secondary-button"
@@ -854,7 +1177,9 @@ function OnlineExamsPage() {
                   </button>
                 </div>
               )}
-              {showExamQuestionForm && !selectedExam.is_published && (
+              {showExamQuestionForm &&
+                !selectedExam.is_published &&
+                !selectedExam.external_form_url && (
                 <form
                   className="form-grid lms-inline-form"
                   onSubmit={(event) => void addExamQuestion(event)}
@@ -878,7 +1203,8 @@ function OnlineExamsPage() {
                   </div>
                 </form>
               )}
-              <ol className="lms-question-list">
+              {!selectedExam.external_form_url && (
+                <ol className="lms-question-list">
                 {selectedExam.questions.map((question) => (
                   <li key={question.id}>
                     <div>
@@ -905,7 +1231,8 @@ function OnlineExamsPage() {
                 {!selectedExam.questions.length && (
                   <li className="muted">No questions yet. Add at least one before publishing.</li>
                 )}
-              </ol>
+                </ol>
+              )}
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -997,6 +1324,39 @@ function OnlineExamsPage() {
                     }
                   />
                 </div>
+                <div className="field">
+                  <label htmlFor="bank-form-provider">Form provider (optional)</label>
+                  <select
+                    id="bank-form-provider"
+                    value={bankForm.external_form_provider ?? ''}
+                    onChange={(event) =>
+                      setBankForm({
+                        ...bankForm,
+                        external_form_provider:
+                          (event.target.value || null) as ExternalFormProvider,
+                      })
+                    }
+                  >
+                    <option value="">Auto-detect from link</option>
+                    <option value="google">Google Forms</option>
+                    <option value="microsoft">Microsoft Forms</option>
+                  </select>
+                </div>
+                <div className="field full-field">
+                  <label htmlFor="bank-form-url">Published form link (optional)</label>
+                  <input
+                    id="bank-form-url"
+                    type="url"
+                    value={bankForm.external_form_url}
+                    onChange={(event) =>
+                      setBankForm({ ...bankForm, external_form_url: event.target.value })
+                    }
+                    placeholder="Paste a published Google or Microsoft Forms link"
+                  />
+                  <small className="muted">
+                    Banks with a form link can be reused when creating external form exams.
+                  </small>
+                </div>
                 <div className="full-field modal-actions">
                   <button
                     className="secondary-button"
@@ -1030,10 +1390,12 @@ function OnlineExamsPage() {
                       <p>
                         {bank.description ?? 'No description'} · {bank.questions.length}{' '}
                         questions
+                        {bank.external_form_url &&
+                          ` · ${externalFormLabel(bank.external_form_provider)} link`}
                       </p>
                     </div>
                     <div className="row-actions">
-                      <button onClick={() => setSelectedBankId(bank.id)} type="button">
+                      <button onClick={() => selectBank(bank)} type="button">
                         Open
                       </button>
                       {canManage && (
@@ -1067,6 +1429,66 @@ function OnlineExamsPage() {
                 </div>
                 <span className="result-count">{selectedBank.questions.length} questions</span>
               </div>
+              {selectedBank.external_form_url && (
+                <div className="external-form-panel">
+                  <div>
+                    <strong>{externalFormLabel(selectedBank.external_form_provider)} link</strong>
+                    <p>Use this link when creating an external form exam.</p>
+                  </div>
+                  <a
+                    className="external-form-link"
+                    href={selectedBank.external_form_url}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    Open form ↗
+                  </a>
+                </div>
+              )}
+              {canManage && (
+                <form
+                  className="form-grid lms-inline-form"
+                  onSubmit={(event) => void saveBankLink(event)}
+                >
+                  <div className="field">
+                    <label htmlFor="bank-detail-provider">Form provider</label>
+                    <select
+                      id="bank-detail-provider"
+                      value={bankForm.external_form_provider ?? ''}
+                      onChange={(event) =>
+                        setBankForm({
+                          ...bankForm,
+                          external_form_provider:
+                            (event.target.value || null) as ExternalFormProvider,
+                        })
+                      }
+                    >
+                      <option value="">Auto-detect from link</option>
+                      <option value="google">Google Forms</option>
+                      <option value="microsoft">Microsoft Forms</option>
+                    </select>
+                  </div>
+                  <div className="field full-field">
+                    <label htmlFor="bank-detail-url">Published form link</label>
+                    <input
+                      id="bank-detail-url"
+                      type="url"
+                      value={bankForm.external_form_url}
+                      onChange={(event) =>
+                        setBankForm({
+                          ...bankForm,
+                          external_form_url: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="full-field modal-actions">
+                    <button className="primary-button" disabled={busy} type="submit">
+                      {busy ? 'Saving…' : 'Save form link'}
+                    </button>
+                  </div>
+                </form>
+              )}
               {canManage && (
                 <div className="toolbar-controls">
                   <button

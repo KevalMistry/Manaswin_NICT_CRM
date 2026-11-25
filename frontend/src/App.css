@@ -739,6 +739,12 @@
 .exam-bank-group input{accent-color:var(--blue);margin-top:2px}
 .exam-chip-row{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;align-items:center}
 .exam-chip{font-size: 12px;color:#61758c;background:#f1f4f8;border-radius:20px;padding:5px 9px}
+.external-form-link{display:inline-flex;align-items:center;font-size: 12px;color:#2f6ed6;background:#eaf2ff;border-radius:20px;padding:6px 11px;text-decoration:none;font-weight:600;white-space:nowrap}
+.external-form-link:hover{background:#dce9ff}
+.external-form-panel{display:flex;justify-content:space-between;align-items:center;gap:14px;border:1px solid #d4e3ff;background:#f6f9ff;border-radius:9px;padding:14px 16px;margin-top:16px;flex-wrap:wrap}
+.external-form-panel strong{display:block;color:var(--navy);font-size: 14px}
+.external-form-panel p{margin:5px 0 0;color:var(--muted);font-size: 12px;line-height:1.55}
+.external-form-button{text-decoration:none;white-space:nowrap}
 .student-exam-list{display:grid;gap:12px;padding:18px}
 .student-exam-card{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;border:1px solid var(--line);border-radius:10px;padding:16px;flex-wrap:wrap}
 .student-exam-main{flex:1;min-width:240px}

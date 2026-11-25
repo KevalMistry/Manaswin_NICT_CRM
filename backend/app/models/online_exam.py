@@ -30,6 +30,10 @@ class QuestionBank(Base):
     )
     title: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional published Google/Microsoft Forms link. When set, a bank can be
+    # reused as the source of an external-form exam without typing questions.
+    external_form_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    external_form_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -87,6 +91,9 @@ class OnlineExam(Base):
     title: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Published Google/Microsoft Forms link used instead of in-CRM questions.
+    external_form_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    external_form_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
     start_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     end_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)

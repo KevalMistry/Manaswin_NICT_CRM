@@ -5,6 +5,7 @@ import api from '../services/api'
 import CertificatePreviewModal from '../components/CertificatePreviewModal'
 import CopyButton from '../components/CopyButton'
 import { apiErrorMessage } from '../utils/apiErrors'
+import { externalFormLabel } from '../utils/externalForms'
 import { openAuthenticatedFile } from '../utils/files'
 import {
   certificateErrorMessage,
@@ -217,6 +218,9 @@ type StudentOnlineExam = {
   title: string
   description: string | null
   instructions: string | null
+  external_form: boolean
+  external_form_provider: 'google' | 'microsoft' | null
+  external_form_url: string | null
   start_at: string | null
   end_at: string | null
   duration_minutes: number
@@ -1256,8 +1260,15 @@ function StudentPortalPage() {
           {!examLoading && onlineExams.length > 0 && (
             <div className="student-exam-list">
               {onlineExams.map((exam) => {
-                const stateLabel =
-                  exam.state === 'in_progress'
+                const stateLabel = exam.external_form
+                  ? exam.state === 'closed'
+                    ? 'Closed'
+                    : exam.state === 'not_started'
+                      ? 'Opens later'
+                      : exam.external_form_url
+                        ? 'Form available'
+                        : 'Unavailable'
+                  : exam.state === 'in_progress'
                     ? 'In progress'
                     : exam.state === 'completed'
                       ? 'Attempts used'
@@ -1268,8 +1279,9 @@ function StudentPortalPage() {
                           : exam.can_start
                             ? 'Available'
                             : 'Unavailable'
-                const actionLabel =
-                  exam.state === 'in_progress'
+                const actionLabel = exam.external_form
+                  ? 'Open exam form'
+                  : exam.state === 'in_progress'
                     ? 'Resume exam'
                     : exam.can_start
                       ? 'Start exam'
@@ -1279,8 +1291,10 @@ function StudentPortalPage() {
                     <div className="student-exam-main">
                       <strong>{exam.title}</strong>
                       <small>
-                        {exam.course_name} · {exam.question_count} questions ·{' '}
-                        {exam.total_marks} marks · {exam.duration_minutes} min
+                        {exam.course_name} ·{' '}
+                        {exam.external_form
+                          ? `${externalFormLabel(exam.external_form_provider)} exam`
+                          : `${exam.question_count} questions · ${exam.total_marks} marks · ${exam.duration_minutes} min`}
                       </small>
                       {exam.description && <p>{exam.description}</p>}
                       <small className="muted-block">
@@ -1289,9 +1303,15 @@ function StudentPortalPage() {
                       </small>
                       <div className="exam-chip-row">
                         <span className="exam-chip">{stateLabel}</span>
-                        <span className="exam-chip">
-                          {exam.attempts_used} of {exam.max_attempts} attempt(s)
-                        </span>
+                        {exam.external_form ? (
+                          <span className="exam-chip">
+                            {externalFormLabel(exam.external_form_provider)}
+                          </span>
+                        ) : (
+                          <span className="exam-chip">
+                            {exam.attempts_used} of {exam.max_attempts} attempt(s)
+                          </span>
+                        )}
                         {exam.results_published && exam.best_percentage !== null && (
                           <span className="exam-chip">
                             Best {exam.best_percentage}% ·{' '}
@@ -1305,19 +1325,36 @@ function StudentPortalPage() {
                       {exam.note && <small className="muted-block">{exam.note}</small>}
                     </div>
                     <div className="student-exam-actions">
-                      <button
-                        className="primary-button"
-                        disabled={
-                          (!exam.can_start && exam.state !== 'in_progress') ||
-                          examBusy === `exam-open-${exam.exam_id}`
-                        }
-                        onClick={() => void openExam(exam)}
-                        type="button"
-                      >
-                        {examBusy === `exam-open-${exam.exam_id}`
-                          ? 'Opening…'
-                          : actionLabel}
-                      </button>
+                      {exam.external_form ? (
+                        exam.external_form_url ? (
+                          <a
+                            className="primary-button external-form-button"
+                            href={exam.external_form_url}
+                            rel="noopener noreferrer"
+                            target="_blank"
+                          >
+                            {actionLabel} ↗
+                          </a>
+                        ) : (
+                          <button className="primary-button" disabled type="button">
+                            {actionLabel}
+                          </button>
+                        )
+                      ) : (
+                        <button
+                          className="primary-button"
+                          disabled={
+                            (!exam.can_start && exam.state !== 'in_progress') ||
+                            examBusy === `exam-open-${exam.exam_id}`
+                          }
+                          onClick={() => void openExam(exam)}
+                          type="button"
+                        >
+                          {examBusy === `exam-open-${exam.exam_id}`
+                            ? 'Opening…'
+                            : actionLabel}
+                        </button>
+                      )}
                       {exam.results_published && exam.last_attempt_id && (
                         <button
                           className="secondary-button"

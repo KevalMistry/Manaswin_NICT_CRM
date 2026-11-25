@@ -22,6 +22,7 @@ from app.models.online_exam import (
 )
 from app.models.student import Student
 from app.models.user import User
+from app.services.external_forms import normalize_form_link
 from app.schemas.online_exam import (
     BankQuestionInput,
     BankQuestionResponse,
@@ -66,6 +67,16 @@ def _naive_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is not None:
         return value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
+
+
+def _external_form_values(
+    url: str | None, provider: str | None
+) -> tuple[str | None, str | None]:
+    """Validate a form link pair and turn API errors into HTTP 400 responses."""
+    try:
+        return normalize_form_link(url, provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _course_scope(db: DatabaseSession, current_user: User):
@@ -180,6 +191,8 @@ def _exam_summary(db: DatabaseSession, exam: OnlineExam) -> dict:
         "batch_id": exam.batch_id,
         "title": exam.title,
         "description": exam.description,
+        "external_form_url": exam.external_form_url,
+        "external_form_provider": exam.external_form_provider,
         "start_at": exam.start_at,
         "end_at": exam.end_at,
         "duration_minutes": exam.duration_minutes,
@@ -454,7 +467,13 @@ def create_question_bank(
 ) -> QuestionBankResponse:
     _get_course(db, payload.course_id)
     _assert_course_access(db, current_user, payload.course_id)
-    bank = QuestionBank(**payload.model_dump(), created_by_id=current_user.id)
+    data = payload.model_dump()
+    url, provider = _external_form_values(
+        data.pop("external_form_url", None), data.pop("external_form_provider", None)
+    )
+    data["external_form_url"] = url
+    data["external_form_provider"] = provider
+    bank = QuestionBank(**data, created_by_id=current_user.id)
     db.add(bank)
     db.commit()
     db.refresh(bank)
@@ -476,7 +495,15 @@ def update_question_bank(
     if bank is None:
         raise HTTPException(status_code=404, detail="Question bank not found")
     _assert_course_access(db, current_user, bank.course_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "external_form_url" in data or "external_form_provider" in data:
+        url, provider = _external_form_values(
+            data.get("external_form_url", bank.external_form_url),
+            data.get("external_form_provider", bank.external_form_provider),
+        )
+        data["external_form_url"] = url
+        data["external_form_provider"] = provider
+    for field, value in data.items():
         setattr(bank, field, value)
     db.commit()
     db.refresh(bank)
@@ -630,6 +657,15 @@ def create_online_exam(
     _assert_course_access(db, current_user, payload.course_id)
     _validate_exam_batch(db, current_user, payload.course_id, payload.batch_id)
 
+    source_bank: QuestionBank | None = None
+    if payload.source_bank_id is not None:
+        source_bank = db.get(QuestionBank, payload.source_bank_id)
+        if source_bank is None or source_bank.course_id != payload.course_id:
+            raise HTTPException(
+                status_code=400,
+                detail="The selected question bank is not available for this course",
+            )
+
     bank_questions: list[BankQuestion] = []
     if payload.bank_question_ids:
         ordered_ids: list[int] = []
@@ -658,7 +694,21 @@ def create_online_exam(
         by_id = {question.id: question for question in bank_questions}
         bank_questions = [by_id[question_id] for question_id in ordered_ids]
 
-    data = payload.model_dump(exclude={"questions", "bank_question_ids"})
+    data = payload.model_dump(
+        exclude={"questions", "bank_question_ids", "source_bank_id"}
+    )
+    form_url, form_provider = _external_form_values(
+        payload.external_form_url, payload.external_form_provider
+    )
+    if (
+        "external_form_url" not in payload.model_fields_set
+        and source_bank is not None
+        and source_bank.external_form_url
+    ):
+        form_url = source_bank.external_form_url
+        form_provider = source_bank.external_form_provider
+    data["external_form_url"] = form_url
+    data["external_form_provider"] = form_provider
     data["start_at"] = _naive_utc(payload.start_at)
     data["end_at"] = _naive_utc(payload.end_at)
     exam = OnlineExam(**data, created_by_id=current_user.id)
@@ -728,6 +778,11 @@ def update_online_exam(
     data = payload.model_dump(exclude_unset=True)
     if "batch_id" in data:
         _validate_exam_batch(db, current_user, exam.course_id, data["batch_id"])
+    if "external_form_url" in data or "external_form_provider" in data:
+        data["external_form_url"], data["external_form_provider"] = _external_form_values(
+            data.get("external_form_url", exam.external_form_url),
+            data.get("external_form_provider", exam.external_form_provider),
+        )
     if "start_at" in data:
         data["start_at"] = _naive_utc(data["start_at"])
     if "end_at" in data:
@@ -769,9 +824,10 @@ def publish_online_exam(
 ) -> OnlineExamResponse:
     exam = _get_exam(db, exam_id)
     _assert_course_access(db, current_user, exam.course_id)
-    if not exam.questions:
+    if not exam.questions and not exam.external_form_url:
         raise HTTPException(
-            status_code=400, detail="Add at least one question before publishing"
+            status_code=400,
+            detail="Add at least one question or a published form link before publishing",
         )
     if exam.start_at and exam.end_at and exam.end_at <= exam.start_at:
         raise HTTPException(
@@ -973,6 +1029,11 @@ def _exam_state(
     best = max((attempt.percentage for attempt in submitted), default=None)
     passed = any(attempt.passed for attempt in submitted)
 
+    external_form = bool(exam.external_form_url)
+    form_open = not (
+        (exam.start_at and now < exam.start_at)
+        or (exam.end_at and now > exam.end_at)
+    )
     state = "available"
     note = None
     can_start = True
@@ -984,6 +1045,8 @@ def _exam_state(
         state = "closed"
         can_start = False
         note = "The exam window has closed."
+    elif external_form:
+        note = "Open the exam form to attempt."
     if in_progress is not None:
         state = "in_progress"
         can_start = False
@@ -993,6 +1056,9 @@ def _exam_state(
         can_start = False
         note = "You have used all available attempts."
 
+    if external_form:
+        can_start = False
+
     return (
         {
             "exam_id": exam.id,
@@ -1001,6 +1067,9 @@ def _exam_state(
             "title": exam.title,
             "description": exam.description,
             "instructions": exam.instructions,
+            "external_form": external_form,
+            "external_form_provider": exam.external_form_provider,
+            "external_form_url": exam.external_form_url if external_form and form_open else None,
             "start_at": exam.start_at,
             "end_at": exam.end_at,
             "duration_minutes": exam.duration_minutes,
@@ -1107,6 +1176,11 @@ def start_exam(
     exam = _get_exam(db, exam_id)
     if not exam.is_published:
         raise HTTPException(status_code=404, detail="Online exam not found")
+    if exam.external_form_url:
+        raise HTTPException(
+            status_code=400,
+            detail="This exam uses an external form. Open it from your exam list.",
+        )
     if not exam.questions:
         raise HTTPException(status_code=400, detail="This exam has no questions yet")
     _student, enrollments = _student_enrollments(db, current_user)

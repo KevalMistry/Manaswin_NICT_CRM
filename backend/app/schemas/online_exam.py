@@ -1,7 +1,10 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+ExternalFormProvider = Literal["google", "microsoft"]
 
 
 # ---------------------------------------------------------------------------
@@ -41,11 +44,15 @@ class QuestionBankCreate(BaseModel):
     course_id: int
     title: str = Field(min_length=2, max_length=150)
     description: str | None = None
+    external_form_url: str | None = Field(default=None, max_length=1000)
+    external_form_provider: ExternalFormProvider | None = None
 
 
 class QuestionBankUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=150)
     description: str | None = None
+    external_form_url: str | None = Field(default=None, max_length=1000)
+    external_form_provider: ExternalFormProvider | None = None
 
 
 class QuestionBankResponse(BaseModel):
@@ -55,6 +62,8 @@ class QuestionBankResponse(BaseModel):
     course_id: int
     title: str
     description: str | None
+    external_form_url: str | None
+    external_form_provider: ExternalFormProvider | None
     created_at: datetime
     questions: list[BankQuestionResponse] = []
 
@@ -93,9 +102,12 @@ class ExamQuestionResponse(BaseModel):
 class OnlineExamCreate(BaseModel):
     course_id: int
     batch_id: int | None = None
+    source_bank_id: int | None = None
     title: str = Field(min_length=2, max_length=150)
     description: str | None = None
     instructions: str | None = None
+    external_form_url: str | None = Field(default=None, max_length=1000)
+    external_form_provider: ExternalFormProvider | None = None
     start_at: datetime | None = None
     end_at: datetime | None = None
     duration_minutes: int = Field(default=60, ge=1, le=600)
@@ -118,6 +130,8 @@ class OnlineExamUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=150)
     description: str | None = None
     instructions: str | None = None
+    external_form_url: str | None = Field(default=None, max_length=1000)
+    external_form_provider: ExternalFormProvider | None = None
     start_at: datetime | None = None
     end_at: datetime | None = None
     duration_minutes: int | None = Field(default=None, ge=1, le=600)
@@ -150,6 +164,8 @@ class OnlineExamSummary(BaseModel):
     batch_id: int | None
     title: str
     description: str | None
+    external_form_url: str | None
+    external_form_provider: ExternalFormProvider | None
     start_at: datetime | None
     end_at: datetime | None
     duration_minutes: int
@@ -203,6 +219,9 @@ class StudentExamSummary(BaseModel):
     title: str
     description: str | None
     instructions: str | None
+    external_form: bool
+    external_form_provider: ExternalFormProvider | None
+    external_form_url: str | None
     start_at: datetime | None
     end_at: datetime | None
     duration_minutes: int
